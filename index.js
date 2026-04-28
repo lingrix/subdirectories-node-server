@@ -1,7 +1,8 @@
 import http from "http";
-import NodeCache from "node-cache";
+import https from "https";
+// import NodeCache from "node-cache";
 
-const cache = new NodeCache({ stdTTL: 3600 });
+// const cache = new NodeCache({ stdTTL: 3600 });
 
 const PORT = process.env.PORT || 3000;
 
@@ -62,6 +63,41 @@ const sendResponse = (
   res.end(body);
 };
 
+const httpsGetOrigin = (connectHostname, pathAndQuery, hostHeader) =>
+  new Promise((resolve, reject) => {
+    console.log("httpsGetOrigin", {
+      connectHostname,
+      pathAndQuery,
+      hostHeader,
+    });
+    const req = https.request(
+      {
+        hostname: connectHostname,
+        port: 443,
+        path: pathAndQuery,
+        method: "GET",
+        headers: {
+          Host: hostHeader,
+          Accept: "*/*",
+          "User-Agent": "subdirectories-node-server/1.0",
+        },
+      },
+      (incoming) => {
+        const chunks = [];
+        incoming.on("data", (chunk) => chunks.push(chunk));
+        incoming.on("end", () => {
+          resolve({
+            statusCode: incoming.statusCode ?? 0,
+            headers: incoming.headers,
+            body: Buffer.concat(chunks),
+          });
+        });
+      },
+    );
+    req.on("error", reject);
+    req.end();
+  });
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
@@ -101,24 +137,26 @@ const server = http.createServer(async (req, res) => {
   const htmlCacheKey = host + pagePath + "-html";
 
   if (url.pathname.includes("9874-8927-reset-site-cache-env")) {
-    cache.del(htmlCacheKey);
-    return sendResponse(res, "Cache reset", "text/plain");
+    // cache.del(htmlCacheKey);
+    // return sendResponse(res, "Cache reset", "text/plain");
+    return sendResponse(res, "Cache disabled", "text/plain");
   }
 
   console.log("apexDomain", apexDomain);
   console.log("languageKey", languageKey);
   console.log("pagePath", pagePath);
 
-  const bareOriginalDomain = apexDomain;
-  const originUrl = new URL(
-    `https://${bareOriginalDomain}${pagePath}${url.search}`,
-  );
+  const connectHostname = apexDomain.replace(/^www\./i, "");
+  const originHostHeader = apexDomain.startsWith("www.")
+    ? apexDomain
+    : `www.${connectHostname}`;
+  const pathAndQuery = `${pagePath || "/"}${url.search || ""}`;
 
-  const originHostHeader = !bareOriginalDomain.startsWith("www.")
-    ? `www.${bareOriginalDomain}`
-    : bareOriginalDomain;
-
-  console.log("originUrl", originUrl.toString());
+  console.log("origin fetch", {
+    connectHostname,
+    pathAndQuery,
+    hostHeader: originHostHeader,
+  });
 
   const isStaticPath = STATIC_PATH_PREFIXES.some(
     (prefix) =>
@@ -128,33 +166,32 @@ const server = http.createServer(async (req, res) => {
   if (FILE_EXTENSIONS.test(url.pathname) || isStaticPath) {
     console.log("Proxying static asset");
     try {
-      const assetRes = await fetch(originUrl.toString(), {
-        headers: { Host: originHostHeader },
-        redirect: "manual",
+      const assetRes = await httpsGetOrigin(
+        connectHostname,
+        pathAndQuery,
+        originHostHeader,
+      );
+      const ct = assetRes.headers["content-type"] || "application/octet-stream";
+      const cc = assetRes.headers["cache-control"] || "public, max-age=3600";
+      res.writeHead(assetRes.statusCode, {
+        "Content-Type": Array.isArray(ct) ? ct[0] : ct,
+        "Cache-Control": Array.isArray(cc) ? cc[0] : cc,
       });
-      const buffer = await assetRes.arrayBuffer();
-      res.writeHead(assetRes.status, {
-        "Content-Type":
-          assetRes.headers.get("content-type") || "application/octet-stream",
-        "Cache-Control":
-          assetRes.headers.get("cache-control") || "public, max-age=3600",
-      });
-      return res.end(Buffer.from(buffer));
+      return res.end(assetRes.body);
     } catch (err) {
       console.error("Error fetching static asset:", err);
       return sendResponse(res, "Error fetching asset", "text/plain", 502);
     }
   }
 
-  console.log("html cache key", htmlCacheKey);
-
-  const cachedHtml = cache.get(htmlCacheKey);
-  if (cachedHtml) {
-    console.log("Returning cached response");
-    return sendResponse(res, cachedHtml, "text/html", 200, {
-      "Cache-Control": "public, max-age=3600",
-    });
-  }
+  // console.log("html cache key", htmlCacheKey);
+  // const cachedHtml = cache.get(htmlCacheKey);
+  // if (cachedHtml) {
+  //   console.log("Returning cached response");
+  //   return sendResponse(res, cachedHtml, "text/html", 200, {
+  //     "Cache-Control": "public, max-age=3600",
+  //   });
+  // }
 
   const html = await fetchTranslatedHtml(
     apexDomain,
@@ -165,15 +202,17 @@ const server = http.createServer(async (req, res) => {
 
   if (!html) {
     console.log("No translated HTML, fetching original domain content", {
+      connectHostname,
+      pathAndQuery,
       originHostHeader,
-      originUrl: originUrl.toString(),
     });
     try {
-      const originRes = await fetch(originUrl.toString(), {
-        headers: { Host: originHostHeader },
-        redirect: "manual",
-      });
-      const originHtml = await originRes.text();
+      const originRes = await httpsGetOrigin(
+        connectHostname,
+        pathAndQuery,
+        originHostHeader,
+      );
+      const originHtml = originRes.body.toString("utf8");
       return sendResponse(res, originHtml, "text/html", 200, {
         "Cache-Control": "public, max-age=3600",
       });
@@ -184,7 +223,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   console.log("Returning translated HTML");
-  cache.set(htmlCacheKey, html);
+  // cache.set(htmlCacheKey, html);
   return sendResponse(res, html, "text/html", 200, {
     "Cache-Control": "public, max-age=3600",
   });
