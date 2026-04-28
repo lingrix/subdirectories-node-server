@@ -114,7 +114,9 @@ const server = http.createServer(async (req, res) => {
     `https://${bareOriginalDomain}${pagePath}${url.search}`,
   );
 
-  const originHostHeader = bareOriginalDomain;
+  const originHostHeader = !bareOriginalDomain.startsWith("www.")
+    ? `www.${bareOriginalDomain}`
+    : bareOriginalDomain;
 
   console.log("originUrl", originUrl.toString());
 
