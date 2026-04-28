@@ -24,7 +24,13 @@ const STATIC_PATH_PREFIXES = [
 
 const fetchTranslatedHtml = async (domain, pagePath, queryParams, hash) => {
   try {
-    console.log("Fetching translated HTML for domain:", domain, pagePath, queryParams, hash);
+    console.log(
+      "Fetching translated HTML for domain:",
+      domain,
+      pagePath,
+      queryParams,
+      hash,
+    );
     const response = await fetch(
       "https://translations-server-production.up.railway.app/translations-and-project-domain",
       {
@@ -42,7 +48,13 @@ const fetchTranslatedHtml = async (domain, pagePath, queryParams, hash) => {
   }
 };
 
-const sendResponse = (res, body, contentType, status = 200, extraHeaders = {}) => {
+const sendResponse = (
+  res,
+  body,
+  contentType,
+  status = 200,
+  extraHeaders = {},
+) => {
   res.writeHead(status, {
     "Content-Type": contentType,
     ...extraHeaders,
@@ -98,7 +110,9 @@ const server = http.createServer(async (req, res) => {
   console.log("pagePath", pagePath);
 
   const bareOriginalDomain = apexDomain;
-  const originUrl = new URL(`https://${bareOriginalDomain}${pagePath}${url.search}`);
+  const originUrl = new URL(
+    `https://${bareOriginalDomain}${pagePath}${url.search}`,
+  );
 
   const originHostHeader = bareOriginalDomain;
 
@@ -114,12 +128,14 @@ const server = http.createServer(async (req, res) => {
     try {
       const assetRes = await fetch(originUrl.toString(), {
         headers: { Host: originHostHeader },
-        redirect: "follow",
+        redirect: "manual",
       });
       const buffer = await assetRes.arrayBuffer();
       res.writeHead(assetRes.status, {
-        "Content-Type": assetRes.headers.get("content-type") || "application/octet-stream",
-        "Cache-Control": assetRes.headers.get("cache-control") || "public, max-age=3600",
+        "Content-Type":
+          assetRes.headers.get("content-type") || "application/octet-stream",
+        "Cache-Control":
+          assetRes.headers.get("cache-control") || "public, max-age=3600",
       });
       return res.end(Buffer.from(buffer));
     } catch (err) {
@@ -138,7 +154,12 @@ const server = http.createServer(async (req, res) => {
     });
   }
 
-  const html = await fetchTranslatedHtml(apexDomain, pagePath, url.search, url.hash);
+  const html = await fetchTranslatedHtml(
+    apexDomain,
+    pagePath,
+    url.search,
+    url.hash,
+  );
 
   if (!html) {
     console.log("No translated HTML, fetching original domain content", {
@@ -148,7 +169,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const originRes = await fetch(originUrl.toString(), {
         headers: { Host: originHostHeader },
-        redirect: "follow",
+        redirect: "manual",
       });
       const originHtml = await originRes.text();
       return sendResponse(res, originHtml, "text/html", 200, {
