@@ -23,7 +23,7 @@ const STATIC_PATH_PREFIXES = [
   "@vite",
 ];
 
-const fetchTranslatedHtml = async (domain, pagePath, queryParams, hash) => {
+const fetchTranslatedHtml = async (domain, lang, pagePath, queryParams, hash) => {
   try {
     console.log(
       "Fetching translated HTML for domain:",
@@ -33,11 +33,11 @@ const fetchTranslatedHtml = async (domain, pagePath, queryParams, hash) => {
       hash,
     );
     const response = await fetch(
-      "https://translations-server-production.up.railway.app/translations-and-project-domain",
+      "https://translations-server-production.up.railway.app/subdirectory/translations-and-project-domain",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ domain, pagePath, queryParams, hash }),
+        body: JSON.stringify({ domain, lang, pagePath, queryParams, hash }),
       },
     );
     const data = await response.json();
@@ -195,6 +195,7 @@ const server = http.createServer(async (req, res) => {
 
   const html = await fetchTranslatedHtml(
     apexDomain,
+    languageKey,
     pagePath,
     url.search,
     url.hash,
