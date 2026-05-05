@@ -160,9 +160,12 @@ const server = http.createServer(async (req, res) => {
   console.log("pagePath", pagePath);
 
   const connectHostname = apexDomain.replace(/^www\./i, "");
-  const originHostHeader = apexDomain.startsWith("www.")
+  const isSubdomain = connectHostname.split(".").length > 2;
+  const originHostHeader = isSubdomain
     ? apexDomain
-    : `www.${connectHostname}`;
+    : apexDomain.startsWith("www.")
+      ? apexDomain
+      : `www.${connectHostname}`;
   const pathAndQuery = `${pagePath || "/"}${url.search || ""}`;
 
   console.log("origin fetch", {
