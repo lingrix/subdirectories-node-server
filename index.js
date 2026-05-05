@@ -178,9 +178,10 @@ const server = http.createServer(async (req, res) => {
   if (FILE_EXTENSIONS.test(url.pathname) || isStaticPath) {
     console.log("Proxying static asset");
     try {
+      const staticPathAndQuery = `${url.pathname}${url.search || ""}`;
       const assetRes = await httpsGetOrigin(
         connectHostname,
-        pathAndQuery,
+        staticPathAndQuery,
         originHostHeader,
       );
       const ct = assetRes.headers["content-type"] || "application/octet-stream";
