@@ -6,8 +6,6 @@ import https from "https";
 
 const PORT = process.env.PORT || 3000;
 
-const LANGUAGE_PATTERN = /^[a-z]{2}(?:-[a-z]{2})?$/i;
-
 const FILE_EXTENSIONS =
   /\.(favicon|ico|css|scss|js|pdf|png|jpg|jpeg|gif|svg|woff|woff2|ttf|eot|mp4|mp3|zip|json|xml|txt|webp)/i;
 
@@ -136,9 +134,7 @@ const server = http.createServer(async (req, res) => {
 
   const pathSegments = url.pathname.split("/").filter(Boolean);
   const languageKey =
-    pathSegments.length > 0 && LANGUAGE_PATTERN.test(pathSegments[0])
-      ? pathSegments[0].toLowerCase()
-      : null;
+    pathSegments.length > 0 ? pathSegments[0].toLowerCase() : null;
   const pagePath =
     languageKey && pathSegments.length > 1
       ? `/${pathSegments.slice(1).join("/")}`
