@@ -223,7 +223,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const originRes = await httpsGetOrigin(
         connectHostname,
-        pathAndQuery,
+        url.pathname, // use original path
         originHostHeader,
       );
       const originHtml = originRes.body.toString("utf8");
