@@ -49,19 +49,40 @@ const stripLanguagePrefix = (pathname, languageCodes) => {
   return stripped === "" ? "/" : stripped;
 };
 
+const log = (stage, message, data) => {
+  if (data !== undefined) {
+    console.log(`[subd-proxy][${stage}] ${message}`, data);
+    return;
+  }
+  console.log(`[subd-proxy][${stage}] ${message}`);
+};
+
 const fetchProjectInfo = async (apexDomain) => {
+  const apiUrl = `${BACKEND_API_URL}/api/public/project-information-subdirectory/${encodeURIComponent(apexDomain)}`;
+  log("projectInfo", "fetching", { apexDomain, apiUrl });
   try {
-    const response = await fetch(
-      `${BACKEND_API_URL}/api/public/project-information-subdirectory/${encodeURIComponent(apexDomain)}`,
-    );
+    const response = await fetch(apiUrl);
+    log("projectInfo", "response", {
+      apexDomain,
+      status: response.status,
+      ok: response.ok,
+    });
     if (!response.ok) return null;
     const data = await response.json();
-    return {
+    const result = {
       languages: data.languages || [],
       dnsConnectionConfig: data.dnsConnectionConfig || null,
     };
+    log("projectInfo", "success", {
+      apexDomain,
+      languageCount: result.languages.length,
+      languageCodes: result.languages.map((l) => l.code),
+      hasDnsConnectionConfig: Boolean(result.dnsConnectionConfig),
+      dnsConnectionConfig: result.dnsConnectionConfig,
+    });
+    return result;
   } catch (error) {
-    console.error("Error fetching project info:", error);
+    log("projectInfo", "error", { apexDomain, error: error.message });
     return null;
   }
 };
@@ -124,34 +145,38 @@ const fetchTranslatedHtml = async (
   search,
   hash,
 ) => {
+  const payload = {
+    domain: apexDomain,
+    languageKey,
+    pagePath,
+    queryParams: search,
+    hash,
+  };
+  log("translations", "fetching", {
+    url: `${TRANSLATIONS_SERVER_URL}/subdirectory/translations`,
+    payload,
+  });
   try {
-    console.log(
-      "Fetching translated HTML for domain:",
-      apexDomain,
-      languageKey,
-      pagePath,
-      search,
-      hash,
-    );
     const response = await fetch(
       `${TRANSLATIONS_SERVER_URL}/subdirectory/translations`,
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          domain: apexDomain,
-          languageKey,
-          pagePath,
-          queryParams: search,
-          hash,
-        }),
+        body: JSON.stringify(payload),
       },
     );
     const data = await response.json();
-    console.log("Translated HTML response status:", response.status);
+    log("translations", "response", {
+      status: response.status,
+      ok: response.ok,
+      hasHtml: Boolean(data?.html),
+      htmlLength: data?.html?.length ?? 0,
+      projectDomain: data?.projectDomain,
+      error: data?.error,
+    });
     return data?.html ?? null;
   } catch (error) {
-    console.error("Error fetching translated HTML:", error);
+    log("translations", "error", { error: error.message });
     return null;
   }
 };
@@ -172,11 +197,7 @@ const sendResponse = (
 
 const httpsGetOrigin = (connectHostname, pathAndQuery, hostHeader) =>
   new Promise((resolve, reject) => {
-    console.log("httpsGetOrigin", {
-      connectHostname,
-      pathAndQuery,
-      hostHeader,
-    });
+    log("origin", "fetching", { connectHostname, pathAndQuery, hostHeader });
     const req = https.request(
       {
         hostname: connectHostname,
@@ -196,15 +217,31 @@ const httpsGetOrigin = (connectHostname, pathAndQuery, hostHeader) =>
         const chunks = [];
         incoming.on("data", (chunk) => chunks.push(chunk));
         incoming.on("end", () => {
+          const body = Buffer.concat(chunks);
+          log("origin", "response", {
+            connectHostname,
+            pathAndQuery,
+            hostHeader,
+            statusCode: incoming.statusCode ?? 0,
+            bodyLength: body.length,
+          });
           resolve({
             statusCode: incoming.statusCode ?? 0,
             headers: incoming.headers,
-            body: Buffer.concat(chunks),
+            body,
           });
         });
       },
     );
-    req.on("error", reject);
+    req.on("error", (error) => {
+      log("origin", "error", {
+        connectHostname,
+        pathAndQuery,
+        hostHeader,
+        error: error.message,
+      });
+      reject(error);
+    });
     req.setTimeout(15_000, () => {
       req.destroy(
         new Error(`Request timeout fetching ${hostHeader}${pathAndQuery}`),
@@ -215,6 +252,7 @@ const httpsGetOrigin = (connectHostname, pathAndQuery, hostHeader) =>
 
 const proxyOriginHtml = async (res, originTarget, originPath, search) => {
   const pathAndQuery = `${originPath || "/"}${search || ""}`;
+  log("proxyOrigin", "start", { originTarget, originPath, search, pathAndQuery });
   try {
     const originRes = await httpsGetOrigin(
       originTarget.connectHostname,
@@ -223,41 +261,73 @@ const proxyOriginHtml = async (res, originTarget, originPath, search) => {
     );
     const originHtml = originRes.body.toString("utf8");
     const status = originRes.statusCode >= 400 ? originRes.statusCode : 200;
+    log("proxyOrigin", "done", { status, htmlLength: originHtml.length });
     return sendResponse(res, originHtml, "text/html", status, {
       "Cache-Control": "public, max-age=3600",
     });
   } catch (err) {
-    console.error("Error fetching original domain content:", err);
+    log("proxyOrigin", "error", { error: err.message });
     return sendResponse(res, "Error fetching origin", "text/plain", 502);
   }
 };
 
+const normalizeApexDomain = (value) => {
+  if (!value) return "";
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .split("/")[0]
+    .split(":")[0]
+    .replace(/^www\./, "");
+};
+
 const server = http.createServer(async (req, res) => {
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  log("1-request", `[${requestId}] incoming`, {
+    method: req.method,
+    url: req.url,
+    pathname: url.pathname,
+    search: url.search,
+    host: req.headers.host,
+    xForwardedHost: req.headers["x-forwarded-host"],
+    xForwardedProto: req.headers["x-forwarded-proto"],
+  });
 
   const forwardedHostHeader = req.headers["x-forwarded-host"];
   const forwardedHost = forwardedHostHeader
     ? forwardedHostHeader.split(",")[0].trim()
     : null;
 
-  const host = (forwardedHost || url.hostname).replace(/^www\./i, "");
+  const host = normalizeApexDomain(forwardedHost || url.hostname);
   const apexDomain = host;
+
+  log("2-domain", `[${requestId}] normalized`, {
+    forwardedHostRaw: forwardedHostHeader,
+    forwardedHost,
+    urlHostname: url.hostname,
+    apexDomain,
+  });
 
   if (
     host === "subdirectory-translations.lingrix.com" ||
     host.endsWith(".lingrix.com") ||
     host.includes("lingrix.com")
   ) {
+    log("2-domain", `[${requestId}] lingrix host — skipping`);
     return sendResponse(res, "Visit Lingrix.com", "text/plain");
   }
 
   if (url.pathname.includes("9874-8927-reset-site-cache-env")) {
+    log("2-domain", `[${requestId}] cache reset endpoint`);
     return sendResponse(res, "Cache disabled", "text/plain");
   }
 
   const projectInfo = await fetchProjectInfo(apexDomain);
   if (!projectInfo) {
-    console.error("Project info not found for domain:", apexDomain);
+    log("3-projectInfo", `[${requestId}] not found — returning 404`, { apexDomain });
     return sendResponse(res, "Not Found", "text/plain", 404);
   }
 
@@ -266,8 +336,8 @@ const server = http.createServer(async (req, res) => {
     parseRequestPath(url.pathname, languages);
   const originTarget = resolveOriginTarget(apexDomain, dnsConnectionConfig);
 
-  console.log("request", {
-    apexDomain,
+  log("4-routing", `[${requestId}] parsed`, {
+    pathname: url.pathname,
     languageKey,
     pagePath,
     originPath,
@@ -279,9 +349,14 @@ const server = http.createServer(async (req, res) => {
     (prefix) =>
       url.pathname.startsWith(`/${prefix}`) || url.pathname.includes(prefix),
   );
+  const isStaticAsset =
+    FILE_EXTENSIONS.test(url.pathname) || isStaticPath;
 
-  if (FILE_EXTENSIONS.test(url.pathname) || isStaticPath) {
-    console.log("Proxying static asset");
+  if (isStaticAsset) {
+    log("5-static", `[${requestId}] proxying asset`, {
+      pathname: url.pathname,
+      originPath,
+    });
     try {
       const staticPathAndQuery = `${originPath}${url.search || ""}`;
       const assetRes = await httpsGetOrigin(
@@ -291,22 +366,27 @@ const server = http.createServer(async (req, res) => {
       );
       const ct = assetRes.headers["content-type"] || "application/octet-stream";
       const cc = assetRes.headers["cache-control"] || "public, max-age=3600";
+      log("5-static", `[${requestId}] done`, {
+        statusCode: assetRes.statusCode,
+        bodyLength: assetRes.body.length,
+      });
       res.writeHead(assetRes.statusCode, {
         "Content-Type": Array.isArray(ct) ? ct[0] : ct,
         "Cache-Control": Array.isArray(cc) ? cc[0] : cc,
       });
       return res.end(assetRes.body);
     } catch (err) {
-      console.error("Error fetching static asset:", err);
+      log("5-static", `[${requestId}] error`, { error: err.message });
       return sendResponse(res, "Error fetching asset", "text/plain", 502);
     }
   }
 
   if (!isTranslationRequest) {
-    console.log("Source-language request, proxying origin");
+    log("6-source", `[${requestId}] source-language — proxying origin`);
     return proxyOriginHtml(res, originTarget, originPath, url.search);
   }
 
+  log("7-translate", `[${requestId}] translation request`);
   const html = await fetchTranslatedHtml(
     apexDomain,
     languageKey,
@@ -316,7 +396,7 @@ const server = http.createServer(async (req, res) => {
   );
 
   if (!html) {
-    console.log("No translated HTML, fetching original domain content", {
+    log("8-fallback", `[${requestId}] translation failed — proxying origin`, {
       originTarget,
       originPath,
       search: url.search,
@@ -324,12 +404,17 @@ const server = http.createServer(async (req, res) => {
     return proxyOriginHtml(res, originTarget, originPath, url.search);
   }
 
-  console.log("Returning translated HTML");
+  log("9-response", `[${requestId}] returning translated HTML`, {
+    htmlLength: html.length,
+  });
   return sendResponse(res, html, "text/html", 200, {
     "Cache-Control": "public, max-age=3600",
   });
 });
 
 server.listen(PORT, () => {
-  console.log(`Subdirectories proxy server running on port ${PORT}`);
+  log("startup", `Subdirectories proxy server running on port ${PORT}`, {
+    BACKEND_API_URL,
+    TRANSLATIONS_SERVER_URL,
+  });
 });
