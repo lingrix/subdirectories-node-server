@@ -1,3 +1,11 @@
+# Subdirectories Node Server
+
+Proxies subdirectory translation requests. Environment variables:
+
+- `PORT` — server port (default `3000`)
+- `BACKEND_API_URL` — Lingrix API base URL (default `https://api.lingrix.com`)
+- `TRANSLATIONS_SERVER_URL` — translations server base URL (default production Railway URL)
+
 # Installation Steps for Caddy on VPS
 
 DigitalOcean VIP IP: 129.212.201.69
