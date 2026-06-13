@@ -9,6 +9,7 @@ Proxies subdirectory translation requests. Environment variables:
 Caddy and this Node app run on the **same droplet**. Caddy proxies to `localhost:3000` — do not point Caddy at a separate DO App Platform URL (403 from Cloudflare).
 
 Customer DNS:
+
 - **Apex** → A record → `129.212.201.69`
 - **WWW** → CNAME → `proxy.lingrix.com`
 
@@ -192,3 +193,19 @@ cd /opt/lingrix/subdirectories-node-server
 git pull
 npm ci
 systemctl restart lingrix-subd
+
+# using digitalocean's web console
+
+cd /opt/lingrix/subdirectories-node-server
+
+git pull origin main
+
+npm install # only if dependencies changed
+
+systemctl restart lingrix-subd
+
+systemctl status lingrix-subd
+
+## watch logs live after restarting:
+
+journalctl -u lingrix-subd -f
