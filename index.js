@@ -70,6 +70,7 @@ const fetchProjectInfo = async (apexDomain) => {
     if (!response.ok) return null;
     const data = await response.json();
     const result = {
+      id: data.id || null,
       languages: data.languages || [],
       dnsConnectionConfig: data.dnsConnectionConfig || null,
     };
@@ -310,6 +311,25 @@ const server = http.createServer(async (req, res) => {
     urlHostname: url.hostname,
     apexDomain,
   });
+
+  if (url.pathname === "/.well-known/lingrix-health") {
+    const projectInfo = await fetchProjectInfo(apexDomain);
+    const status = projectInfo ? 200 : 404;
+    return sendResponse(
+      res,
+      JSON.stringify({
+        ok: Boolean(projectInfo),
+        host: apexDomain,
+        projectId: projectInfo?.id ?? null,
+        version: process.env.npm_package_version || "1.0.0",
+      }),
+      "application/json",
+      status,
+      {
+        "Cache-Control": "no-store",
+      },
+    );
+  }
 
   if (
     host === "subdirectory-translations.lingrix.com" ||
