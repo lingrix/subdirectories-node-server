@@ -182,6 +182,47 @@ const fetchTranslatedHtml = async (
   }
 };
 
+/**
+ * Fetch SEO-enriched HTML for a source-language (non-translated) page.
+ * The translations-server injects canonical + hreflang tags without translating content.
+ * Returns null on any failure so the caller can fall back to raw origin proxy.
+ */
+const fetchSourceSeoHtml = async (apexDomain, pagePath, search, hash) => {
+  const payload = {
+    domain: apexDomain,
+    pagePath,
+    queryParams: search,
+    hash,
+  };
+  log("source-seo", "fetching", {
+    url: `${TRANSLATIONS_SERVER_URL}/subdirectory/source-seo`,
+    payload,
+  });
+  try {
+    const response = await fetch(
+      `${TRANSLATIONS_SERVER_URL}/subdirectory/source-seo`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+    );
+    const data = await response.json();
+    log("source-seo", "response", {
+      status: response.status,
+      ok: response.ok,
+      hasHtml: Boolean(data?.html),
+      htmlLength: data?.html?.length ?? 0,
+      projectDomain: data?.projectDomain,
+      error: data?.error,
+    });
+    return data?.html ?? null;
+  } catch (error) {
+    log("source-seo", "error", { error: error.message });
+    return null;
+  }
+};
+
 const sendResponse = (
   res,
   body,
@@ -402,7 +443,16 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (!isTranslationRequest) {
-    log("6-source", `[${requestId}] source-language — proxying origin`);
+    log("6-source", `[${requestId}] source-language — fetching SEO-enriched HTML`);
+    const seoHtml = await fetchSourceSeoHtml(apexDomain, pagePath, url.search, url.hash);
+    if (seoHtml) {
+      log("6-source", `[${requestId}] SEO enrichment OK`, { htmlLength: seoHtml.length });
+      return sendResponse(res, seoHtml, "text/html", 200, {
+        "Cache-Control": "public, max-age=3600",
+      });
+    }
+    // Graceful fallback: return raw origin HTML if SEO enrichment fails
+    log("6-source-fallback", `[${requestId}] SEO enrichment failed — proxying raw origin`);
     return proxyOriginHtml(res, originTarget, originPath, url.search);
   }
 
